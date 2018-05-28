@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
@@ -15,6 +16,9 @@ namespace Haack
 {
     class Program
     {
+        // Valid characters when mapping from the blog post slug to a file path
+        // Needs to match the regex in https://github.com/damieng/jekyll-blog-comments-azure/blob/master/JekyllBlogCommentsAzure/PostCommentToPullRequestFunction.cs
+        static readonly Regex validPathChars = new Regex(@"[^a-zA-Z0-9-]");
         static readonly XNamespace ns = "http://disqus.com";
         static readonly XNamespace dsq = "http://disqus.com/disqus-internals";
 
@@ -103,7 +107,7 @@ namespace Haack
         {
             string ParseSlug(string url)
             {
-                return url.Substring(url.LastIndexOf('/') + 1);
+                return validPathChars.Replace(url.Substring(url.LastIndexOf('/') + 1), "-").ToLowerInvariant();
             }
 
             foreach (var element in elements.Where(e => e.Name.LocalName.Equals("thread", StringComparison.Ordinal)))
