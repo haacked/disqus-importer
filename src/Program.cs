@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Linq;
@@ -15,6 +16,9 @@ namespace Haack
 {
     class Program
     {
+        // Valid characters when mapping from the blog post slug to a file path
+        // Needs to match the regex in https://github.com/damieng/jekyll-blog-comments-azure/blob/master/JekyllBlogCommentsAzure/PostCommentToPullRequestFunction.cs
+        static readonly Regex validPathChars = new Regex(@"[^a-zA-Z0-9-]");
         static readonly XNamespace ns = "http://disqus.com";
         static readonly XNamespace dsq = "http://disqus.com/disqus-internals";
 
@@ -37,13 +41,14 @@ namespace Haack
                 Console.WriteLine($"The directory '${jekyllPath}' does not exist.");
                 return;
             }
+            var commentHostname = args[2]; //The host for which we want to export comments such as haacked.com.
 
             var stopWatch = new Stopwatch();
             stopWatch.Start();
             WriteJekyllIncludes(jekyllPath).Wait();
             Console.WriteLine($"Importing from file '${path}'.");
 
-            var postLookup = EnumerateThreads(EnumerateElements(path)).ToDictionary(p => p.Item1, p => p.Item2);
+            var postLookup = EnumerateThreads(EnumerateElements(path), commentHostname).ToDictionary(p => p.Item1, p => p.Item2);
             var comments = EnumerateComments(EnumerateElements(path), postLookup);
 
             var serializer = new SerializerBuilder().Build();
@@ -95,22 +100,36 @@ namespace Haack
         {
             foreach (var element in elements.Where(e => e.Name.LocalName.Equals("post", StringComparison.Ordinal)))
             {
-                yield return CommentInfo.Create(element, threadLookup);
+                var postId = element.Element(ns + "thread").Attribute(dsq + "id").Value;
+                if (threadLookup.ContainsKey(postId))
+                {
+                    yield return CommentInfo.Create(element, postId, threadLookup[postId]);
+                }
             }
         }
 
-        static IEnumerable<(string, string)> EnumerateThreads(IEnumerable<XElement> elements)
+        static IEnumerable<(string, string)> EnumerateThreads(IEnumerable<XElement> elements, string commentHostname)
         {
             string ParseSlug(string url)
             {
-                return url.Substring(url.LastIndexOf('/') + 1);
+                var urlWithoutTrailingSlash = url.EndsWith('/') ? url.Substring(0, url.Length - 1) : url;
+                return validPathChars
+                    .Replace(urlWithoutTrailingSlash.Substring(urlWithoutTrailingSlash.LastIndexOf('/') + 1), "-")
+                    .ToLowerInvariant();
             }
 
             foreach (var element in elements.Where(e => e.Name.LocalName.Equals("thread", StringComparison.Ordinal)))
             {
                 var id = element.Attribute(dsq + "id");
-                var link = element.Element(ns + "link");
-                yield return (id.Value, ParseSlug(link.Value));
+                var link = element.Element(ns + "link").Value;
+
+                if (Uri.TryCreate(link, UriKind.Absolute, out var linkUri) && linkUri.Host.Equals(commentHostname, StringComparison.OrdinalIgnoreCase))
+                {
+                    var slug = ParseSlug(link);
+                    if (string.IsNullOrEmpty(slug))
+                        Debugger.Break();
+                    yield return (id.Value, ParseSlug(link));
+                }
             }
         }
 
@@ -156,6 +175,8 @@ namespace Haack
 
             static string EncodeGravatar(string email)
             {
+                if (email == null) return null;
+
                 using (var md5 = MD5.Create())
                     return BitConverter.ToString(md5.ComputeHash(Encoding.UTF8.GetBytes(email))).Replace("-", "").ToLower();
             }
@@ -163,19 +184,18 @@ namespace Haack
 
         class CommentInfo
         {
-            public static CommentInfo Create(XElement postElement, Dictionary<string, string> threadLookup)
+            public static CommentInfo Create(XElement postElement, string postId, string slug)
             {
                 var author = postElement.Element(ns + "author");
-                var email = author.Element(ns + "email").Value;
+                var email = author.Element(ns + "email");
                 var date = DateTime.Parse(postElement.Element(ns + "createdAt").Value);
-                var postId = postElement.Element(ns + "thread").Attribute(dsq + "id").Value;
 
                 var comment = new Comment("dsq-" + postElement.Attribute(dsq + "id").Value,
                     postElement.Element(ns + "message").Value,
                     author.Element(ns + "name").Value,
-                    email,
+                    email?.Value,
                     date);
-                return new CommentInfo(threadLookup[postId], comment);
+                return new CommentInfo(slug, comment);
             }
 
             public CommentInfo(string slug, Comment comment)
