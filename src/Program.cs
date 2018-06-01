@@ -128,7 +128,7 @@ namespace Haack
                     var slug = ParseSlug(link);
                     if (string.IsNullOrEmpty(slug))
                         Debugger.Break();
-                    yield return (id.Value, ParseSlug(link));
+                    yield return (id.Value, slug);
                 }
             }
         }
