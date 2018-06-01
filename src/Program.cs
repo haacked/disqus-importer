@@ -4,8 +4,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Xml;
@@ -98,7 +96,7 @@ namespace Haack
 
         static IEnumerable<CommentInfo> EnumerateComments(IEnumerable<XElement> elements, Dictionary<string, string> threadLookup)
         {
-            foreach (var element in elements.Where(e => e.Name.LocalName.Equals("post", StringComparison.Ordinal)))
+            foreach (var element in elements.Where(e => e.Name.LocalName.Equals("post", StringComparison.Ordinal) && e.Element(ns + "isSpam")?.Value != "true"))
             {
                 var postId = element.Element(ns + "thread").Attribute(dsq + "id").Value;
                 if (threadLookup.ContainsKey(postId))
@@ -128,7 +126,7 @@ namespace Haack
                     var slug = ParseSlug(link);
                     if (string.IsNullOrEmpty(slug))
                         Debugger.Break();
-                    yield return (id.Value, ParseSlug(link));
+                    yield return (id.Value, slug);
                 }
             }
         }
@@ -156,30 +154,22 @@ namespace Haack
 
         private class Comment
         {
-            public Comment(string id, string message, string author, string email, DateTime date)
+            public Comment(string id, string replyToId, string message, string name, string avatar, DateTime date)
             {
                 this.id = id;
+                this.replyToId = replyToId;
                 this.message = message;
-                this.author = author;
-                this.email = email;
+                this.name = name;
+                this.avatar = avatar;
                 this.date = date;
-                this.gravatar = EncodeGravatar(email);
             }
 
             public string id { get; }
+            public string replyToId { get; }
             public DateTime date { get; }
-            public string author { get; }
-            public string email { get; }
-            public string gravatar { get; }
+            public string name { get; }
+            public string avatar { get; }
             public string message { get; }
-
-            static string EncodeGravatar(string email)
-            {
-                if (email == null) return null;
-
-                using (var md5 = MD5.Create())
-                    return BitConverter.ToString(md5.ComputeHash(Encoding.UTF8.GetBytes(email))).Replace("-", "").ToLower();
-            }
         }
 
         class CommentInfo
@@ -187,13 +177,35 @@ namespace Haack
             public static CommentInfo Create(XElement postElement, string postId, string slug)
             {
                 var author = postElement.Element(ns + "author");
-                var email = author.Element(ns + "email");
+                var name = author.Element(ns + "name").Value;
+                string avatar = null;
+                string replyToId = null;
+                var parentElement = postElement.Element(ns + "parent");
+                if (parentElement != null)
+                {
+                    replyToId = parentElement.Attribute(dsq + "id")?.Value;
+                    if (replyToId != null)
+                        replyToId = "dsq-" + replyToId;
+                }
+                var disqusUsername = author.Element(ns + "username")?.Value;
+                if (disqusUsername == null && name != null)
+                {
+                    disqusUsername = name;
+                }
+
+                // Special Case!
+                if (disqusUsername != null)
+                {
+                    avatar = $"https://disqus.com/api/users/avatars/{disqusUsername}.jpg";
+                }
+
                 var date = DateTime.Parse(postElement.Element(ns + "createdAt").Value);
 
                 var comment = new Comment("dsq-" + postElement.Attribute(dsq + "id").Value,
+                    replyToId,
                     postElement.Element(ns + "message").Value,
-                    author.Element(ns + "name").Value,
-                    email?.Value,
+                    name,
+                    avatar,
                     date);
                 return new CommentInfo(slug, comment);
             }
