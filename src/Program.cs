@@ -98,7 +98,7 @@ namespace Haack
 
         static IEnumerable<CommentInfo> EnumerateComments(IEnumerable<XElement> elements, Dictionary<string, string> threadLookup)
         {
-            foreach (var element in elements.Where(e => e.Name.LocalName.Equals("post", StringComparison.Ordinal)))
+            foreach (var element in elements.Where(e => e.Name.LocalName.Equals("post", StringComparison.Ordinal) && e.Element(ns + "isSpam")?.Value != "true"))
             {
                 var postId = element.Element(ns + "thread").Attribute(dsq + "id").Value;
                 if (threadLookup.ContainsKey(postId))
